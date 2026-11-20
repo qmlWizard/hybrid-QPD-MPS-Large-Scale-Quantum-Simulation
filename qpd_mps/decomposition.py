@@ -526,7 +526,8 @@ class MitaraiFujiDecomposition:
         dlt = self.delta if delta is None else delta
         log_n = math.log(2.0 * math.log(2.0 / dlt) / eps ** 2) + 2.0 * self._log_kappa(circuit)
         if log_n > 700:
-            raise OverflowError("Required number of shots is astronomically large (>1e300).")
+            print("Required number of shots is astronomically large (>1e300).")
+            log_n = 700  # cap to avoid overflow in math.exp()
         n = math.ceil(math.exp(log_n))
         if n > 1e12:
             warnings.warn(f"Optimal shots = {n:.3e}; consider cutting fewer gates.", RuntimeWarning)

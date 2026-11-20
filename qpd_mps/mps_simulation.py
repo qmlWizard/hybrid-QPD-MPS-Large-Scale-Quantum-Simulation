@@ -34,6 +34,7 @@ import numpy as np
 from qiskit import QuantumCircuit
 from qiskit.quantum_info import SparsePauliOp, Statevector
 from qiskit_aer import AerSimulator
+from qiskit import transpile
 
 try:
     import psutil
@@ -247,12 +248,21 @@ class MPSSimulationAnalyzer:
 
     def _original_stats(self):
         qc = self.original.copy()
+        backend = self._backend(self.seed)
+
+        # Transpile unsupported gates such as MCX into
+        # instructions supported by the Aer MPS simulator.
+        qc = transpile(qc, backend=backend, optimization_level=2)
+
+        # Add MPS-specific save instructions AFTER transpilation.
         qc.save_matrix_product_state(label="mps")
-        qc.save_expectation_value(self.observable, list(range(self.n)), label="exp")
-        data = self._backend(self.seed).run(qc, shots=1).result().data()
+        qc.save_expectation_value(self.observable, list(range(self.n)), label="exp" )
+
+        result = backend.run(qc, shots=1).result()
+        data = result.data()
         dims = self._bond_dims(data["mps"], self.n)
         mem = self._nbytes(data["mps"])
-        return self._aggregate([dims], [mem]), float(np.real(data["exp"]))
+        return (self._aggregate([dims], [mem]), float(np.real(data["exp"])))
 
     def _reference_value(self, mps_exact_value: Optional[float]) -> Optional[float]:
         if self.reference == "statevector":
@@ -269,8 +279,10 @@ class MPSSimulationAnalyzer:
 
     # ------------------------------------------------------ decomposed circuit
     def _decomposed_mps_stats(self, decomposed: QuantumCircuit, n_out: int) -> MPSStats:
-        probe = self._pre_measurement_circuit(decomposed, n_out)
+        transpiled = transpile(decomposed, backend=self._backend(self.seed), optimization_level=2)
+        probe = self._pre_measurement_circuit(transpiled, n_out)
         n_total = probe.num_qubits               # n (+1 ancilla if any cut)
+    
         dims_list, mem_list = [], []
         for t in range(self.n_trajectories):
             data = self._backend(self.seed + 1 + t).run(probe, shots=1).result().data()
@@ -299,7 +311,7 @@ class MPSSimulationAnalyzer:
         capped = self.shots is None and optimal_shots > self.max_shots
         result = self._backend(self.seed + 10_000).run(decomposed, shots=shots).result()
         rec = self.decomposer.reconstruct(result, observable=self._observable_dict(), circuit=decomposed)
-        
+
         # 4) error vs ORIGINAL uncut circuit
         ref = self._reference_value(mps_orig_value)
         err = abs(rec.expectation - ref) if ref is not None else None
